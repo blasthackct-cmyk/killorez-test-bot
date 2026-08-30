@@ -5,6 +5,8 @@ from utils.database import fetch_one, fetch_all, execute_query
 from utils.embeds import create_embed, create_success_embed, create_error_embed, json_to_list, list_to_json, EMBED_GREEN, EMBED_RED, EMBED_PURPLE
 import json
 import traceback
+import aiohttp
+import io
 
 WATERMARK = "KILLOREZ HELPER"
 
@@ -949,12 +951,24 @@ class TicketCog(commands.Cog, name="Ticket"):
             description=description,
             color=0x2F3136
         )
-        if panel['logo_url']:
-            embed.set_image(url=panel['logo_url'])
         embed.set_footer(text=WATERMARK)
 
+        logo_file = None
+        if panel['logo_url']:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(panel['logo_url']) as resp:
+                        if resp.status == 200:
+                            logo_bytes = await resp.read()
+                            logo_file = discord.File(io.BytesIO(logo_bytes), filename="logo.png")
+            except Exception as e:
+                print(f"[TICKET ERROR] Failed to download logo: {e}")
+
         view = PanelButtonView(panel_id)
-        await interaction.response.send_message(embed=embed, view=view)
+        if logo_file:
+            await interaction.response.send_message(file=logo_file, embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view)
 
     # ==================== УДАЛЕНИЕ ПАНЕЛИ ====================
 
@@ -1346,8 +1360,17 @@ class TicketCog(commands.Cog, name="Ticket"):
         embed = create_success_embed("Успешно",
             f"Логотип для панели **{panel['name']}** обновлён!\n\n"
             f"Для предпросмотра используйте `/ticket panel send`")
-        embed.set_image(url=url)
-        await interaction.response.send_message(embed=embed)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        logo_bytes = await resp.read()
+                        logo_file = discord.File(io.BytesIO(logo_bytes), filename="logo.png")
+                        await interaction.response.send_message(file=logo_file, embed=embed)
+                    else:
+                        await interaction.response.send_message(embed=embed)
+        except Exception:
+            await interaction.response.send_message(embed=embed)
 
     # ==================== ЗАКРЫТИЕ ТИКЕТА ====================
 
