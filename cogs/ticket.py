@@ -5,6 +5,11 @@ from utils.database import fetch_one, fetch_all, execute_query
 from utils.embeds import create_embed, create_success_embed, create_error_embed, json_to_list, list_to_json, EMBED_GREEN, EMBED_RED, EMBED_PURPLE
 import json
 import traceback
+import aiohttp
+import io
+import asyncio
+
+WATERMARK = "KILLOREZ HELPER"
 
 
 def _fix_newlines(text):
@@ -13,32 +18,29 @@ def _fix_newlines(text):
     return text.replace("\\n", "\n")
 
 
-def format_requiem_description(panel):
-    """Форматирование описания в точности по структуре со скриншота"""
-    name = panel['name'] or "Открыты заявки на вступление в семью!"
-    desc = _fix_newlines(panel['description'] or "")
-    welcome = _fix_newlines(panel['welcome_message'] or "")
-    call_msg = _fix_newlines(panel['call_message'] or "")
-
-    parts = [f"📢 **{name}**\n"]
-
-    if desc:
-        parts.append(desc)
-        parts.append("\n---\n")
-
-    if welcome:
-        parts.append(welcome)
-        parts.append("\n---\n")
-
-    if call_msg:
-        parts.append(call_msg)
-        parts.append("\n---\n")
-
-    parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
-    return "\n".join(parts)
+def get_requiem_template(panel_name):
+    return (
+        f"📢 **{panel_name}**\n\n"
+        "> Заявки в семью принимаются только на сервер **Redwood**.\n"
+        "> Возраст для рассмотрения заявки: от **14 лет**.\n\n"
+        "---\n\n"
+        "**Срок рассмотрения заявок:** от пары часов до **2 дней**.\n"
+        "Решение направляется ботом в **личные сообщения + в ветку тикета**, где вас пригласят на **собеседование**."
+        " Отсутствие ответа в течение **24 часов** приводит к автоматическому закрытию тикета.\n\n"
+        "Внимательно прочитайте шаблон заявки при её подаче.\n\n"
+        "---\n\n"
+        "**Дополнительные требования:**\n"
+        "• Откаты с DM должны быть записаны **не более 1 недели** назад;\n"
+        "• Минимальное кол-во людей на DM — **10 человек**;\n"
+        "• Минимальная продолжительность DM — **10 минут**;\n"
+        "• Видео-откат загружен на **YouTube / RuTube / Google Диск / Яндекс Диск**.\n\n"
+        "> После подачи заявки следите за **ЛС** или за **сгенерированным тикетом** на общение от рекрутеров.\n\n"
+        "---\n\n"
+        "Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓"
+    )
 
 
-# ==================== ВЫПАДАЮЩЕЕ МЕНЮ ВЫБОРА (1:1 СКРИНШОТ) ====================
+# ==================== ВЫПАДАЮЩИЙ СПИСОК (REQUIEM STYLE) ====================
 
 class PanelFamilySelect(discord.ui.Select):
     def __init__(self, panels):
@@ -88,7 +90,7 @@ class PanelFamilySelectView(discord.ui.View):
         self.add_item(PanelFamilySelect(panels))
 
 
-# ==================== МОДАЛ АНКЕТЫ (до 5 вопросов) ====================
+# ==================== МОДАЛ АНКЕТЫ ====================
 
 class ApplicationModal(discord.ui.Modal):
     def __init__(self, questions, guild_id, panel_id, panel_name):
@@ -160,7 +162,10 @@ class ApplicationModal(discord.ui.Modal):
 
             answers = {child.label: child.value for child in self.children if isinstance(child, discord.ui.TextInput)}
 
-            prev_tickets = await fetch_all("SELECT * FROM tickets WHERE guild_id = ? AND user_id = ?", (guild.id, interaction.user.id))
+            prev_tickets = await fetch_all(
+                "SELECT * FROM tickets WHERE guild_id = ? AND user_id = ?",
+                (guild.id, interaction.user.id)
+            )
             prev_count = len(prev_tickets) - 1
 
             desc = f"**Тип заявки:** {self.panel_name}\n\n"
@@ -195,28 +200,26 @@ class ApplicationModal(discord.ui.Modal):
             )
 
 
-# ==================== ДЕЙСТВИЯ В ТИКЕТЕ ====================
+# ==================== ДЕЙСТВИЯ В КАНАЛЕ ТИКЕТА ====================
 
-class CallChannelSelectView(discord.ui.View):
+class CallChannelSelect(discord.ui.Select):
     def __init__(self, guild_id, panel_id, target_user_id, call_channel_ids):
-        super().__init__(timeout=60)
         options = [
             discord.SelectOption(label=f"Канал {ch_id}", value=str(ch_id), description=f"ID: {ch_id}")
             for ch_id in call_channel_ids
         ]
-        select = discord.ui.Select(
+        super().__init__(
             placeholder="Выберите голосовой канал для обзвона",
             options=options,
             min_values=1,
             max_values=1
         )
-        select.callback = self.channel_selected
-        self.add_item(select)
+        self.guild_id = guild_id
         self.panel_id = panel_id
         self.target_user_id = target_user_id
 
-    async def channel_selected(self, interaction: discord.Interaction):
-        selected_channel_id = int(interaction.data['values'][0])
+    async def callback(self, interaction: discord.Interaction):
+        selected_channel_id = int(self.values[0])
         panel = await fetch_one("SELECT * FROM ticket_panels WHERE panel_id = ?", (self.panel_id,))
         call_msg = panel['call_message'] if panel and panel['call_message'] else "Обзвон начат! Переходите в голосовой канал."
 
@@ -234,6 +237,12 @@ class CallChannelSelectView(discord.ui.View):
 
         await interaction.channel.send(content=user_mention, embed=embed)
         await interaction.response.edit_message(content=None, view=None, embed=None)
+
+
+class CallChannelSelectView(discord.ui.View):
+    def __init__(self, guild_id, panel_id, target_user_id, call_channel_ids):
+        super().__init__(timeout=60)
+        self.add_item(CallChannelSelect(guild_id, panel_id, target_user_id, call_channel_ids))
 
 
 class TicketActionView(discord.ui.View):
@@ -351,6 +360,33 @@ class TicketActionView(discord.ui.View):
             pass
 
 
+# ==================== МОДАЛЫ НАСТРОЙКИ ====================
+
+class PanelQuestionsModal(discord.ui.Modal, title="Вопросы анкеты"):
+    questions_input = discord.ui.TextInput(
+        label="Вопросы (каждый с новой строки, макс. 5)",
+        style=discord.TextStyle.paragraph,
+        placeholder="Введите вопросы анкеты",
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, panel_id):
+        super().__init__()
+        self.panel_id = panel_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        questions = [q.strip() for q in self.questions_input.value.split("\n") if q.strip()]
+        if not questions:
+            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Введите хотя бы один вопрос!"), ephemeral=True)
+
+        await execute_query(
+            "UPDATE ticket_panels SET questions = ? WHERE panel_id = ?",
+            (list_to_json(questions[:5]), self.panel_id)
+        )
+        await interaction.response.send_message(embed=create_success_embed("Успешно", "Вопросы обновлены!"), ephemeral=True)
+
+
 # ==================== КОГ ====================
 
 class TicketCog(commands.Cog, name="Ticket"):
@@ -359,7 +395,6 @@ class TicketCog(commands.Cog, name="Ticket"):
 
     ticket = app_commands.Group(name="ticket", description="Система тикетов")
     panel = app_commands.Group(name="panel", parent=ticket, description="Управление панелями тикетов")
-    hub = app_commands.Group(name="hub", parent=ticket, description="Отправка единого хаба выбора семей")
 
     async def panel_autocomplete(self, interaction: discord.Interaction, current: str):
         panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
@@ -368,64 +403,52 @@ class TicketCog(commands.Cog, name="Ticket"):
             for p in panels if current.lower() in p['name'].lower()
         ][:25]
 
-    # Отправка единой панели с выпадающим меню со всеми семьями
-    @hub.command(name="send", description="Отправить единый хаб выбора семьи (как в REQUIEM)")
-    @app_commands.describe(banner_url="URL баннера (картинки сверху)", title="Заголовок")
-    async def hub_send(self, interaction: discord.Interaction, banner_url: str = None, title: str = "Открыты заявки на вступление в семью!"):
-        panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
-        if not panels:
-            return await interaction.response.send_message(
-                embed=create_error_embed("Ошибка", "Сначала создайте хотя бы одну панель через `/ticket panel create`!"),
-                ephemeral=True
-            )
+    # ==================== ОТПРАВКА ПАНЕЛИ 1:1 ====================
 
-        # Текст шаблона 1:1 со скриншота
-        description = (
-            f"📢 **{title}**\n\n"
-            "> Заявки в семью принимаются только на сервер **Redwood**.\n"
-            "> Возраст для рассмотрения заявки: от **14 лет**.\n\n"
-            "---\n\n"
-            "**Срок рассмотрения заявок:** от пары часов до **2 дней**.\n"
-            "Решение направляется ботом в **личные сообщения + в ветку тикета**, где вас пригласят на **собеседование**."
-            " Отсутствие ответа в течение **24 часов** приводит к автоматическому закрытию тикета.\n\n"
-            "Внимательно прочитайте шаблон заявки при её подаче.\n\n"
-            "---\n\n"
-            "**Дополнительные требования:**\n"
-            "• Откаты с DM должны быть записаны **не более 1 недели** назад;\n"
-            "• Минимальное кол-во людей на DM — **10 человек**;\n"
-            "• Минимальная продолжительность DM — **10 минут**;\n"
-            "• Видео-откат загружен на **YouTube / RuTube / Google Диск / Яндекс Диск**.\n\n"
-            "> После подачи заявки следите за **ЛС** или за **сгенерированным тикетом** на общение от рекрутеров.\n\n"
-            "---\n\n"
-            "Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓"
-        )
-
-        embed = discord.Embed(description=description, color=0x2B2D31)
-        if banner_url:
-            embed.set_image(url=banner_url)
-
-        view = PanelFamilySelectView(panels)
-        await interaction.response.send_message(embed=embed, view=view)
-
-    # Отправка конкретной панели с выпадающим меню
-    @panel.command(name="send", description="Отправить панель в стиле REQUIEM")
+    @panel.command(name="send", description="Отправить панель тикетов (стиль REQUIEM)")
     @app_commands.describe(panel_id="ID панели")
     @app_commands.autocomplete(panel_id=panel_autocomplete)
     async def panel_send(self, interaction: discord.Interaction, panel_id: int):
-        panel = await fetch_one("SELECT * FROM ticket_panels WHERE panel_id = ? AND guild_id = ?", (panel_id, interaction.guild.id))
+        panel = await fetch_one(
+            "SELECT * FROM ticket_panels WHERE panel_id = ? AND guild_id = ?",
+            (panel_id, interaction.guild.id)
+        )
         if not panel:
-            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Панель не найдена!"), ephemeral=True)
+            return await interaction.response.send_message(
+                embed=create_error_embed("Ошибка", "Панель не найдена!"),
+                ephemeral=True
+            )
 
-        description = format_requiem_description(panel)
-        embed = discord.Embed(description=description, color=0x2B2D31)
+        # Если задано подробное кастомное описание — берем его, иначе используем шаблон
+        if panel['description'] and len(panel['description'].strip()) > 20:
+            content = _fix_newlines(panel['description'])
+        else:
+            content = get_requiem_template(panel['name'])
 
+        # Получаем все панели сервера для единого меню выбора
+        all_panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
+        view = PanelFamilySelectView(all_panels if all_panels else [panel])
+
+        await interaction.response.defer()
+
+        # Отправляем без Embed — картинка как файл, разметка в content
         if panel['logo_url']:
-            embed.set_image(url=panel['logo_url'])
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(panel['logo_url']) as resp:
+                        if resp.status == 200:
+                            img_data = await resp.read()
+                            file = discord.File(io.BytesIO(img_data), filename="banner.png")
+                            await interaction.followup.send(content=content, file=file, view=view)
+                            return
+            except Exception as e:
+                print(f"[TICKET LOGO ERROR] {e}")
 
-        view = PanelFamilySelectView([panel])
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.followup.send(content=content, view=view)
 
-    @panel.command(name="create", description="Создать новую семью/панель тикетов")
+    # ==================== УПРАВЛЕНИЕ ПАНЕЛЬЮ ====================
+
+    @panel.command(name="create", description="Создать панель/семью")
     async def panel_create(self, interaction: discord.Interaction, name: str, description: str = ""):
         panel_id = await execute_query(
             "INSERT INTO ticket_panels (guild_id, name, description) VALUES (?, ?, ?)",
@@ -433,42 +456,59 @@ class TicketCog(commands.Cog, name="Ticket"):
         )
         embed = create_success_embed(
             "Панель создана",
-            f"**Название:** {name}\n**ID:** {panel_id}\nНастройте категорию и роли через `/ticket panel ...`"
+            f"**Название:** {name}\n**ID:** {panel_id}\n\n"
+            f"Настройте:\n"
+            f"• `/ticket panel logo` — баннер (прямая ссылка .png/.jpg)\n"
+            f"• `/ticket panel category` — категория каналов\n"
+            f"• `/ticket panel admin_roles` — роли проверяющих\n"
+            f"• `/ticket panel questions` — вопросы анкеты\n"
+            f"• `/ticket panel send` — отправить"
         )
         await interaction.response.send_message(embed=embed)
 
-    @panel.command(name="category", description="Установить категорию для тикетов")
-    @app_commands.autocomplete(panel_id=panel_autocomplete)
-    async def panel_category(self, interaction: discord.Interaction, panel_id: int, category: discord.CategoryChannel):
-        await execute_query("UPDATE ticket_panels SET category_id = ? WHERE panel_id = ?", (category.id, panel_id))
-        await interaction.response.send_message(embed=create_success_embed("Успешно", f"Категория установлена: {category.mention}"))
-
-    @panel.command(name="admin_roles", description="Установить роли администраторов (через запятую)")
-    @app_commands.autocomplete(panel_id=panel_autocomplete)
-    async def panel_admin_roles(self, interaction: discord.Interaction, panel_id: int, roles: str):
-        role_ids = [int(r.strip()) for r in roles.split(",") if r.strip().isdigit()]
-        await execute_query("UPDATE ticket_panels SET admin_roles = ? WHERE panel_id = ?", (list_to_json(role_ids), panel_id))
-        await interaction.response.send_message(embed=create_success_embed("Успешно", "Роли администраторов обновлены!"))
-
-    @panel.command(name="logo", description="Установить баннер/логотип панели")
+    @panel.command(name="logo", description="Установить баннер сверху (прямая ссылка на картинку)")
     @app_commands.autocomplete(panel_id=panel_autocomplete)
     async def panel_logo(self, interaction: discord.Interaction, panel_id: int, url: str):
         if not url.startswith(("http://", "https://")):
-            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Некорректный URL"), ephemeral=True)
+            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "URL должен начинаться с http:// или https://"), ephemeral=True)
         await execute_query("UPDATE ticket_panels SET logo_url = ? WHERE panel_id = ?", (url, panel_id))
-        embed = create_success_embed("Успешно", "Баннер обновлён!")
-        embed.set_image(url=url)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=create_success_embed("Успешно", "Баннер обновлен!"))
 
-    @ticket.command(name="close", description="Закрыть текущий тикет")
+    @panel.command(name="category", description="Установить категорию для каналов тикетов")
+    @app_commands.autocomplete(panel_id=panel_autocomplete)
+    async def panel_category(self, interaction: discord.Interaction, panel_id: int, category: discord.CategoryChannel):
+        await execute_query("UPDATE ticket_panels SET category_id = ? WHERE panel_id = ?", (category.id, panel_id))
+        await interaction.response.send_message(embed=create_success_embed("Успешно", f"Категория: {category.mention}"))
+
+    @panel.command(name="admin_roles", description="ID ролей администраторов через запятую")
+    @app_commands.autocomplete(panel_id=panel_autocomplete)
+    async def panel_admin_roles(self, interaction: discord.Interaction, panel_id: int, roles: str):
+        role_ids = [int(r.strip()) for r in roles.split(",") if r.strip().isdigit()]
+        if not role_ids:
+            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Укажите корректные ID!"), ephemeral=True)
+        await execute_query("UPDATE ticket_panels SET admin_roles = ? WHERE panel_id = ?", (list_to_json(role_ids), panel_id))
+        await interaction.response.send_message(embed=create_success_embed("Успешно", "Роли администраторов обновлены!"))
+
+    @panel.command(name="questions", description="Настроить вопросы анкеты")
+    @app_commands.autocomplete(panel_id=panel_autocomplete)
+    async def panel_questions(self, interaction: discord.Interaction, panel_id: int):
+        panel = await fetch_one("SELECT * FROM ticket_panels WHERE panel_id = ? AND guild_id = ?", (panel_id, interaction.guild.id))
+        if not panel:
+            return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Панель не найдена!"), ephemeral=True)
+
+        modal = PanelQuestionsModal(panel_id)
+        existing = json_to_list(panel['questions'])
+        modal.questions_input.default = "\n".join(existing)
+        await interaction.response.send_modal(modal)
+
+    @ticket.command(name="close", description="Закрыть тикет")
     async def ticket_close(self, interaction: discord.Interaction):
         ticket = await fetch_one("SELECT * FROM tickets WHERE channel_id = ?", (interaction.channel.id,))
         if not ticket:
             return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Это не канал тикета!"), ephemeral=True)
 
         await execute_query("DELETE FROM tickets WHERE channel_id = ?", (interaction.channel.id,))
-        await interaction.response.send_message(embed=create_embed("Тикет закрывается...", "Канал будет удален через 5 секунд.", EMBED_RED, footer=False))
-        import asyncio
+        await interaction.response.send_message(embed=create_embed("Тикет закрывается...", "Удаление через 5 секунд.", EMBED_RED, footer=False))
         await asyncio.sleep(5)
         await interaction.channel.delete()
 
