@@ -23,8 +23,6 @@ def format_panel_description(panel):
     welcome = _fix_newlines(panel['welcome_message'] or "")
     call_msg = _fix_newlines(panel['call_message'] or "")
 
-    sep = "────────────────────────"
-
     parts = []
     parts.append(f"🔴 **{name}**")
     parts.append("")
@@ -33,21 +31,15 @@ def format_panel_description(panel):
         for line in desc.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
-        parts.append(sep)
-        parts.append("")
 
     if welcome:
         for line in welcome.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
-        parts.append(sep)
-        parts.append("")
 
     if call_msg:
         for line in call_msg.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
-        parts.append("")
-        parts.append(sep)
         parts.append("")
 
     parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
