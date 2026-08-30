@@ -23,6 +23,8 @@ def format_panel_description(panel):
     welcome = _fix_newlines(panel['welcome_message'] or "")
     call_msg = _fix_newlines(panel['call_message'] or "")
 
+    sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
     parts = []
     parts.append(f"🔴 **{name}**")
     parts.append("")
@@ -31,15 +33,21 @@ def format_panel_description(panel):
         for line in desc.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
+        parts.append(sep)
+        parts.append("")
 
     if welcome:
         for line in welcome.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
+        parts.append(sep)
+        parts.append("")
 
     if call_msg:
         for line in call_msg.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
+        parts.append("")
+        parts.append(sep)
         parts.append("")
 
     parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
@@ -50,12 +58,11 @@ def format_panel_description(panel):
 # ==================== КНОПКА ПОДАЧИ ЗАЯВКИ ====================
 
 class PanelButtonView(discord.ui.View):
-    def __init__(self, panel_id):
+    def __init__(self, panel_id, panel_name="Подать заявку"):
         super().__init__(timeout=None)
         button = discord.ui.Button(
-            label="Подать заявку",
+            label=f"📩  {panel_name}",
             style=discord.ButtonStyle.green,
-            emoji="📩",
             custom_id=f"ticket_panel_btn_{panel_id}"
         )
         button.callback = self._on_button_click
@@ -947,7 +954,7 @@ class TicketCog(commands.Cog, name="Ticket"):
             embed.set_image(url=panel['logo_url'])
         embed.set_footer(text=WATERMARK)
 
-        view = PanelButtonView(panel_id)
+        view = PanelButtonView(panel_id, panel['name'])
         await interaction.response.send_message(embed=embed, view=view)
 
     # ==================== УДАЛЕНИЕ ПАНЕЛИ ====================
