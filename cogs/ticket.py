@@ -12,6 +12,39 @@ import asyncio
 WATERMARK = "KILLOREZ HELPER"
 
 
+def _fix_nl(text):
+    if not text:
+        return ""
+    return text.replace("\\n", "\n")
+
+
+def format_panel_content(panel):
+    name = panel['name'] or "Тикет"
+    desc = _fix_nl(panel['description'] or "")
+    welcome = _fix_nl(panel['welcome_message'] or "")
+    call_msg = _fix_nl(panel['call_message'] or "")
+
+    parts = []
+    parts.append(f"🔴 **{name}**")
+
+    if desc:
+        parts.append("")
+        parts.append(f"```\n{desc}\n```")
+
+    if welcome:
+        parts.append("")
+        parts.append(f"```\n{welcome}\n```")
+
+    if call_msg:
+        parts.append("")
+        parts.append(f"```\n{call_msg}\n```")
+
+    parts.append("")
+    parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
+
+    return "\n".join(parts)
+
+
 def format_ticket_embed(panel_name, answers, user, created_at):
     embed = discord.Embed(
         title=f"Заявка — {panel_name}",
@@ -351,6 +384,8 @@ class TicketCog(commands.Cog, name="Ticket"):
         if not panel:
             return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Панель не найдена!"), ephemeral=True)
 
+        content = format_panel_content(panel)
+
         all_panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
         view = PanelFamilySelectView(all_panels if all_panels else [panel])
 
@@ -363,12 +398,12 @@ class TicketCog(commands.Cog, name="Ticket"):
                         if resp.status == 200:
                             img_data = await resp.read()
                             file = discord.File(io.BytesIO(img_data), filename="banner.png")
-                            await interaction.followup.send(file=file, view=view)
+                            await interaction.followup.send(content=content, file=file, view=view)
                             return
             except Exception as e:
                 print(f"[TICKET LOGO ERROR] {e}")
 
-        await interaction.followup.send(view=view)
+        await interaction.followup.send(content=content, view=view)
 
     # ==================== НАСТРОЙКИ ====================
 
