@@ -24,25 +24,22 @@ def format_panel_content(panel):
     welcome = _fix_nl(panel['welcome_message'] or "")
     call_msg = _fix_nl(panel['call_message'] or "")
 
-    parts = []
-    parts.append(f"🔴 **{name}**")
+    embed = discord.Embed(
+        title=f"🔴 {name}",
+        color=0x2F3136
+    )
 
     if desc:
-        parts.append("")
-        parts.append(f"```\n{desc}\n```")
-
+        embed.add_field(name="\u200b", value=f"```\n{desc}\n```", inline=False)
     if welcome:
-        parts.append("")
-        parts.append(f"```\n{welcome}\n```")
-
+        embed.add_field(name="\u200b", value=f"```\n{welcome}\n```", inline=False)
     if call_msg:
-        parts.append("")
-        parts.append(f"```\n{call_msg}\n```")
+        embed.add_field(name="\u200b", value=f"```\n{call_msg}\n```", inline=False)
 
-    parts.append("")
-    parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
+    embed.add_field(name="\u200b", value="Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓", inline=False)
+    embed.set_footer(text=WATERMARK)
 
-    return "\n".join(parts)
+    return embed
 
 
 def format_ticket_embed(panel_name, answers, user, created_at):
@@ -384,7 +381,7 @@ class TicketCog(commands.Cog, name="Ticket"):
         if not panel:
             return await interaction.response.send_message(embed=create_error_embed("Ошибка", "Панель не найдена!"), ephemeral=True)
 
-        content = format_panel_content(panel)
+        embed = format_panel_content(panel)
 
         all_panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
         view = PanelFamilySelectView(all_panels if all_panels else [panel])
@@ -398,12 +395,13 @@ class TicketCog(commands.Cog, name="Ticket"):
                         if resp.status == 200:
                             img_data = await resp.read()
                             file = discord.File(io.BytesIO(img_data), filename="banner.png")
-                            await interaction.followup.send(content=content, file=file, view=view)
+                            embed.set_image(url="attachment://banner.png")
+                            await interaction.followup.send(embed=embed, file=file, view=view)
                             return
             except Exception as e:
                 print(f"[TICKET LOGO ERROR] {e}")
 
-        await interaction.followup.send(content=content, view=view)
+        await interaction.followup.send(embed=embed, view=view)
 
     # ==================== НАСТРОЙКИ ====================
 
