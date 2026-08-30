@@ -7,18 +7,25 @@ import json
 import traceback
 import aiohttp
 import io
+import re
 import asyncio
 
 WATERMARK = "KILLOREZ HELPER"
 
 
-def _fix_newlines(text):
+def _normalize_requiem_markdown(text: str) -> str:
+    """Очищает текст и форматирует разделители так, чтобы Discord рисовал тонкие линии."""
     if not text:
         return ""
-    return text.replace("\\n", "\n")
+    text = text.replace("\r\n", "\n").replace("\\n", "\n")
+    # Discord требует строгие пустые строки до и после трех дефисов без пробелов в строке
+    text = re.sub(r'(?m)^[ \t]*---[ \t]*$', '\n---\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
-def get_requiem_template(panel_name):
+def get_requiem_template(panel_name: str) -> str:
+    """Шаблон 1:1 со скриншота с корректными разделителями."""
     return (
         f"📢 **{panel_name}**\n\n"
         "> Заявки в семью принимаются только на сервер **Redwood**.\n"
@@ -40,7 +47,7 @@ def get_requiem_template(panel_name):
     )
 
 
-# ==================== ВЫПАДАЮЩИЙ СПИСОК (REQUIEM STYLE) ====================
+# ==================== ВЫПАДАЮЩИЙ СПИСОК СЕМЕЙ ====================
 
 class PanelFamilySelect(discord.ui.Select):
     def __init__(self, panels):
@@ -90,7 +97,7 @@ class PanelFamilySelectView(discord.ui.View):
         self.add_item(PanelFamilySelect(panels))
 
 
-# ==================== МОДАЛ АНКЕТЫ ====================
+# ==================== МОДАЛЬНОЕ ОКНО АНКЕТЫ ====================
 
 class ApplicationModal(discord.ui.Modal):
     def __init__(self, questions, guild_id, panel_id, panel_name):
@@ -200,7 +207,7 @@ class ApplicationModal(discord.ui.Modal):
             )
 
 
-# ==================== ДЕЙСТВИЯ В КАНАЛЕ ТИКЕТА ====================
+# ==================== УПРАВЛЕНИЕ ВНУТРИ ТИКЕТА ====================
 
 class CallChannelSelect(discord.ui.Select):
     def __init__(self, guild_id, panel_id, target_user_id, call_channel_ids):
@@ -403,9 +410,9 @@ class TicketCog(commands.Cog, name="Ticket"):
             for p in panels if current.lower() in p['name'].lower()
         ][:25]
 
-    # ==================== ОТПРАВКА ПАНЕЛИ 1:1 ====================
+    # ==================== ОТПРАВКА ПАНЕЛИ ====================
 
-    @panel.command(name="send", description="Отправить панель тикетов (стиль REQUIEM)")
+    @panel.command(name="send", description="Отправить панель в точности как в REQUIEM")
     @app_commands.describe(panel_id="ID панели")
     @app_commands.autocomplete(panel_id=panel_autocomplete)
     async def panel_send(self, interaction: discord.Interaction, panel_id: int):
@@ -419,19 +426,18 @@ class TicketCog(commands.Cog, name="Ticket"):
                 ephemeral=True
             )
 
-        # Если задано подробное кастомное описание — берем его, иначе используем шаблон
+        # Если в БД кастомное описание отсутствует или слишком короткое — ставим стандартный шаблон
         if panel['description'] and len(panel['description'].strip()) > 20:
-            content = _fix_newlines(panel['description'])
+            content = _normalize_requiem_markdown(panel['description'])
         else:
             content = get_requiem_template(panel['name'])
 
-        # Получаем все панели сервера для единого меню выбора
         all_panels = await fetch_all("SELECT * FROM ticket_panels WHERE guild_id = ?", (interaction.guild.id,))
         view = PanelFamilySelectView(all_panels if all_panels else [panel])
 
         await interaction.response.defer()
 
-        # Отправляем без Embed — картинка как файл, разметка в content
+        # Баннер отправляется как прикрепленный файл без рамок Embed
         if panel['logo_url']:
             try:
                 async with aiohttp.ClientSession() as session:
@@ -446,9 +452,9 @@ class TicketCog(commands.Cog, name="Ticket"):
 
         await interaction.followup.send(content=content, view=view)
 
-    # ==================== УПРАВЛЕНИЕ ПАНЕЛЬЮ ====================
+    # ==================== КОМАНДЫ НАСТРОЙКИ ====================
 
-    @panel.command(name="create", description="Создать панель/семью")
+    @panel.command(name="create", description="Создать семью/панель")
     async def panel_create(self, interaction: discord.Interaction, name: str, description: str = ""):
         panel_id = await execute_query(
             "INSERT INTO ticket_panels (guild_id, name, description) VALUES (?, ?, ?)",
@@ -460,7 +466,7 @@ class TicketCog(commands.Cog, name="Ticket"):
             f"Настройте:\n"
             f"• `/ticket panel logo` — баннер (прямая ссылка .png/.jpg)\n"
             f"• `/ticket panel category` — категория каналов\n"
-            f"• `/ticket panel admin_roles` — роли проверяющих\n"
+            f"• `/ticket panel admin_roles` — роли администраторов\n"
             f"• `/ticket panel questions` — вопросы анкеты\n"
             f"• `/ticket panel send` — отправить"
         )
