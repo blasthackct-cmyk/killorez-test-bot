@@ -9,11 +9,19 @@ import traceback
 WATERMARK = "KILLOREZ HELPER"
 
 
+def _fix_newlines(text):
+    if not text:
+        return ""
+    return text.replace("\\n", "\n")
+
+
 def format_panel_description(panel):
     name = panel['name'] or "Тикет"
-    desc = panel['description'] or ""
-    welcome = panel['welcome_message'] or ""
-    call_msg = panel['call_message'] or ""
+    desc = _fix_newlines(panel['description'] or "")
+    welcome = _fix_newlines(panel['welcome_message'] or "")
+    call_msg = _fix_newlines(panel['call_message'] or "")
+
+    sep = "────────────────────────"
 
     parts = []
     parts.append(f"🔴 **{name}**")
@@ -23,21 +31,21 @@ def format_panel_description(panel):
         for line in desc.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
-        parts.append("――――――――――――――")
+        parts.append(sep)
         parts.append("")
 
     if welcome:
         for line in welcome.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
-        parts.append("――――――――――――――")
+        parts.append(sep)
         parts.append("")
 
     if call_msg:
         for line in call_msg.split("\n"):
             parts.append(f"> {line}" if line.strip() else ">")
         parts.append("")
-        parts.append("――――――――――――――")
+        parts.append(sep)
         parts.append("")
 
     parts.append("Ознакомьтесь с условиями выше и нажмите кнопку ниже ↓")
@@ -45,48 +53,27 @@ def format_panel_description(panel):
     return "\n".join(parts)
 
 
-# ==================== ВЫБОР ПАНЕЛИ (SELECT MENU) ====================
+# ==================== КНОПКА ПОДАЧИ ЗАЯВКИ ====================
 
-class PanelSelectView(discord.ui.View):
-    def __init__(self, guild_id, panels):
+class PanelButtonView(discord.ui.View):
+    def __init__(self, panel_id):
         super().__init__(timeout=None)
-        self.add_item(PanelSelect(guild_id, panels))
-
-
-class PanelSelect(discord.ui.Select):
-    def __init__(self, guild_id, panels):
-        self._guild_id = guild_id
-        options = []
-        for p in panels:
-            options.append(discord.SelectOption(
-                label=p['name'][:100],
-                value=str(p['panel_id']),
-                description=(p['description'] or "Подать заявку")[:100]
-            ))
-        if not options:
-            options.append(discord.SelectOption(
-                label="Нет панелей", value="none", description="Создайте панель"
-            ))
-        super().__init__(
-            placeholder="Выберите семью для подачи заявки...",
-            options=options,
-            min_values=1,
-            max_values=1
+        button = discord.ui.Button(
+            label="Подать заявку",
+            style=discord.ButtonStyle.green,
+            emoji="📩",
+            custom_id=f"ticket_panel_btn_{panel_id}"
         )
+        button.callback = self._on_button_click
+        self.add_item(button)
+        self._panel_id = panel_id
 
-    async def callback(self, interaction: discord.Interaction):
+    async def _on_button_click(self, interaction: discord.Interaction):
         try:
-            if self.values[0] == "none":
-                embed = create_error_embed("Ошибка", "Нет доступных панелей!")
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-
-            selected_id = int(self.values[0])
             panel = await fetch_one(
-                "SELECT * FROM ticket_panels WHERE panel_id = ? AND guild_id = ?",
-                (selected_id, self._guild_id)
+                "SELECT * FROM ticket_panels WHERE panel_id = ?",
+                (self._panel_id,)
             )
-
             if not panel:
                 embed = create_error_embed("Ошибка", "Панель не найдена!")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -98,14 +85,14 @@ class PanelSelect(discord.ui.Select):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
 
-            modal = ApplicationModal(questions, self._guild_id, panel['panel_id'], panel['name'])
+            modal = ApplicationModal(questions, panel['guild_id'], panel['panel_id'], panel['name'])
             await interaction.response.send_modal(modal)
 
         except Exception as e:
-            print(f"[TICKET ERROR] PanelSelect.callback: {e}")
+            print(f"[TICKET ERROR] PanelButtonView._on_button_click: {e}")
             traceback.print_exc()
             try:
-                embed = create_error_embed("Ошибка", "Произошла ошибка при выборе панели.")
+                embed = create_error_embed("Ошибка", "Произошла ошибка.")
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             except Exception:
                 pass
@@ -966,11 +953,7 @@ class TicketCog(commands.Cog, name="Ticket"):
             embed.set_image(url=panel['logo_url'])
         embed.set_footer(text=WATERMARK)
 
-        all_panels = await fetch_all(
-            "SELECT panel_id, name, description FROM ticket_panels WHERE guild_id = ?",
-            (interaction.guild.id,)
-        )
-        view = PanelSelectView(interaction.guild.id, all_panels)
+        view = PanelButtonView(panel_id)
         await interaction.response.send_message(embed=embed, view=view)
 
     # ==================== УДАЛЕНИЕ ПАНЕЛИ ====================
